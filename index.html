@@ -37,6 +37,7 @@ window.RAJ_CONFIG = {
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
@@ -172,7 +173,7 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:3px;padding:0 1p
     <label class="f" for="lEmail">Email<input id="lEmail" type="email" autocomplete="username" inputmode="email"></label>
     <label class="f" for="lPass">Password<input id="lPass" type="password" autocomplete="current-password"></label>
     <p class="err" id="lErr" role="alert" hidden></p>
-    <div class="actions"><button class="btn primary" id="lGo" type="submit">Sign in</button></div>
+    <div class="actions"><button class="btn primary" id="lGo" type="submit">Sign in</button><button class="btn" id="lBack" type="button">Back to price list</button></div>
   </form>
 </div>
 
@@ -355,6 +356,7 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:3px;padding:0 1p
     else if(state.offline){st.textContent='Not connected'; st.className='status warn'}
     else if(!canW){st.textContent='View only'; st.className='status'}
     else {st.textContent='Saved online'; st.className='status'}
+    st.hidden=!state.canWrite&&!state.offline;
 
     $('bar').hidden=!canW;
     if(!canW){ $('bulk').hidden=true; $('adjust').hidden=true }
@@ -714,20 +716,23 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:3px;padding:0 1p
       }).subscribe();
     }catch(e){}
   }
-  function startApp(){
+  function startApp(canWrite){
     if(started) return; started=true;
-    $('gate').hidden=true; $('appmain').hidden=false; $('btnOut').hidden=false; $('status').hidden=false;
-    state.canWrite=true; state.offline=''; state.loaded=false; render();
+    $('gate').hidden=true; $('appmain').hidden=false; $('btnOut').hidden=!canWrite;
+    state.canWrite=!!canWrite; state.offline=''; state.loaded=false; render();
     loadAll().then(function(rows){
       state.items=new Map(rows.map(function(r){return [r.id,rowToItem(r)]}));
       state.loaded=true; render(); subscribe();
     }).catch(function(){ state.offline='error'; state.canWrite=false; state.loaded=true; render() });
   }
+  function clearHash(){ try{history.replaceState(null,'',location.pathname+location.search)}catch(e){} }
   function initAuth(){
     if(!CFG.url||!CFG.key||/YOUR_SUPABASE/.test(CFG.url+CFG.key)){ showGate('config'); return }
     if(!window.supabase){ showGate('error'); return }
     sb=window.supabase.createClient(CFG.url,CFG.key,{auth:{persistSession:true,autoRefreshToken:true}});
     store=makeStore();
+    var staffPage=(location.hash==='#staff');
+    window.addEventListener('hashchange',function(){location.reload()});
     $('gLogin').addEventListener('submit',function(ev){
       ev.preventDefault();
       var em=$('lEmail').value.trim(), pw=$('lPass').value, er=$('lErr');
@@ -736,13 +741,17 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:3px;padding:0 1p
       sb.auth.signInWithPassword({email:em,password:pw}).then(function(res){
         $('lGo').disabled=false;
         if(res.error){er.hidden=false; er.textContent=(res.error.status===400||/invalid/i.test(res.error.message))?'Wrong email or password.':'Could not sign in. Check the internet connection and try again.'; return}
-        $('lPass').value=''; startApp();
+        $('lPass').value=''; clearHash(); startApp(true);
       },function(){$('lGo').disabled=false; er.hidden=false; er.textContent='Could not sign in. Check the internet connection and try again.'});
     });
+    $('lBack').addEventListener('click',function(){ clearHash(); startApp(false) });
     $('btnOut').addEventListener('click',function(){ sb.auth.signOut().then(function(){location.reload()},function(){location.reload()}) });
     sb.auth.getSession().then(function(r){
-      if(r&&r.data&&r.data.session) startApp(); else showGate('login');
-    },function(){ showGate('error') });
+      var has=!!(r&&r.data&&r.data.session);
+      if(has){ if(staffPage) clearHash(); startApp(true) }
+      else if(staffPage) showGate('login');
+      else startApp(false);
+    },function(){ startApp(false) });
   }
 
   wire();
