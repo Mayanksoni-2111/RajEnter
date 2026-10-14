@@ -6,6 +6,7 @@
 window.RAJ_CONFIG = {
   url: "https://inttrcmownubygmzcopg.supabase.co",
   key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImludHRyY21vd251YnlnbXpjb3BnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MTg3Nzg0MywiZXhwIjoyMTA3NDUzODQzfQ.W6QjBbM5Q2R5N6us_0p4mWEblDNhf-XNLZitEAGChP0"
+
 };
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -144,6 +145,11 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:3px;padding:0 1p
   .brow{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 2.4rem;grid-template-areas:"n n x" "c g ."}
   .brow .bn{grid-area:n}.brow .bc{grid-area:c}.brow .bg{grid-area:g}.brow .bx{grid-area:x}
 }
+.paste{border:1px dashed var(--line);border-radius:10px;padding:12px}
+.paste summary{cursor:pointer;font-family:var(--f-cond);font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.pastebody{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.pastebody textarea{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:10px;font-size:.95rem;resize:vertical;min-height:7rem}
+.pastebody .inline label.f{flex:1 1 9rem}
 .gate{max-width:420px;margin:0 auto;padding:28px 16px 64px}
 .gate .panel{margin:0}
 .gate p{margin:0}
@@ -204,6 +210,20 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:3px;padding:0 1p
   <section class="panel" id="bulk" hidden>
     <h2>Add many items</h2>
     <p class="hint">Type one item per row, with its cash price and its price with GST. Press Enter in the last box and a new row opens with the same name and prices, so for the next colour you only change what differs. You can also copy rows from Excel and paste them into the first box.</p>
+    <details class="paste" id="pasteBox" open>
+      <summary>Paste a whole list</summary>
+      <div class="pastebody">
+        <p class="hint">Copy your list from WhatsApp or notes and paste it here. The app finds each item and its price (lines like “Iphone 17 pro 256 @129500”, or a name on one line and the price on the next). You can fix anything before saving.</p>
+        <textarea id="pasteText" rows="8" placeholder="Paste your list here"></textarea>
+        <div class="inline">
+          <label class="f" for="pasteKind">These prices are<select id="pasteKind"><option value="gst">With GST</option><option value="cash">Cash, no GST</option></select></label>
+          <label class="f" for="pasteFill">The other price<select id="pasteFill"><option value="">Leave empty</option><option value="calc">Work it out with GST %</option></select></label>
+          <label class="f" for="pasteRate">GST %<input id="pasteRate" inputmode="decimal" value="18"></label>
+        </div>
+        <div class="actions"><button class="btn primary" id="pasteGo" type="button">Read list</button></div>
+        <div class="preview" id="pasteMsg" aria-live="polite"></div>
+      </div>
+    </details>
     <label class="f" for="bulkCat">Category for these items
       <input id="bulkCat" list="catlist" autocomplete="off" placeholder="Example: iPhone 17 series">
     </label>
@@ -597,10 +617,69 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:3px;padding:0 1p
       });
       updateBulkPreview();
     });
+    $('pasteGo').addEventListener('click',function(){
+      var items=parseList($('pasteText').value), msg=$('pasteMsg');
+      if(!items.length){msg.textContent='No prices found. Each item needs a price, for example: iPhone 17 256GB @82000'; return}
+      var kind=$('pasteKind').value, calc=$('pasteFill').value==='calc', rate=parseNum($('pasteRate').value);
+      if(rate==null||rate>100) rate=18;
+      Array.prototype.slice.call(rows.children).forEach(function(r){
+        if(!r.querySelector('.bn').value.trim()&&!r.querySelector('.bc').value.trim()&&!r.querySelector('.bg').value.trim()) rows.removeChild(r);
+      });
+      items.forEach(function(it){
+        var cash=null, gst=null;
+        if(kind==='gst'){gst=it.price; if(calc) cash=round2(it.price/(1+rate/100))}
+        else{cash=it.price; if(calc) gst=Math.round(it.price*(1+rate/100))}
+        addBRow({name:it.name,cash:cash,gst:gst});
+      });
+      msg.textContent=items.length+' items found. Check the rows below, fix anything that looks wrong, then press Save.';
+      $('pasteText').value=''; updateBulkPreview();
+      rows.scrollIntoView({behavior:'smooth',block:'start'});
+    });
     $('bAddRow').addEventListener('click',function(){
       var last=rows.lastElementChild, v=last?{name:last.querySelector('.bn').value,cash:parseNum(last.querySelector('.bc').value),gst:parseNum(last.querySelector('.bg').value)}:{};
       addBRow(v,true,true); updateBulkPreview();
     });
+  }
+
+  /* ---------- read a pasted list (WhatsApp, notes) ---------- */
+  var GST_NOTE='\\(\\s*(?:incl\\w*|in|with)\\.?\\s*gst\\s*\\)';
+  function cleanName(t){
+    t=String(t).replace(/[*_~`]/g,' ')
+      .replace(new RegExp(GST_NOTE,'gi'),' ')
+      .replace(/\bmoq[\s:-]*\d*\s*pcs?\b/gi,' ')
+      .replace(/\b(?:incl\w*\.?|in|with|excl\w*)\s*gst\b/gi,' ')
+      .replace(/\b\d+\s*pcs?\b/gi,' ')
+      .replace(/\b(?:fresh|master|ready|available|mumbai)\b/gi,' ');
+    return t.replace(/\s+/g,' ').replace(/^[\s,.:;@=-]+|[\s,.:;@=-]+$/g,'');
+  }
+  function findPrice(line){
+    var s=line.replace(/[*_~`]/g,' ').replace(new RegExp(GST_NOTE,'gi'),' ').replace(/[\s.,;:]+$/,'');
+    var m=s.match(/^(.*?)\bMRP\s*[-:]?\s*(\d[\d,]*)\s*(?:less|minus|-)\s*(\d+(?:\.\d+)?)\s*%/i);
+    if(m) return {text:m[1], price:Math.round(parseNum(m[2])*(1-Number(m[3])/100))};
+    m=s.match(/(@?)\s*(?:₹|rs\.?)?\s*(\d{1,3}(?:,\d{2,3})+|\d+)(?:\.\d+)?\s*(?:\/-)?$/i);
+    if(!m) return null;
+    var before=s.slice(0,m.index), val=parseNum(m[2]);
+    if(val==null||val<=0) return null;
+    if(m[1]!=='@'){
+      var prev=before.slice(-1);
+      if(prev&&!/[\s:=-]/.test(prev)) return null;
+      if(val<500) return null;
+    }
+    return {text:before, price:val};
+  }
+  function parseList(text){
+    var out=[], head='';
+    String(text).split(/\r?\n/).forEach(function(raw){
+      var line=raw.trim();
+      if(!line){head=''; return}
+      var f=findPrice(line);
+      if(!f){var c=cleanName(line); if(c) head=head?head+' '+c:c; return}
+      var part=cleanName(f.text);
+      var name=(head&&part)?head+' '+part:(head||part);
+      if(name) out.push({name:name,price:f.price});
+      if(!/^\d+\s*(?:gb)?\s*[\/+]\s*\d+/i.test(part)) head='';
+    });
+    return out;
   }
 
   /* ---------- change prices together ---------- */
